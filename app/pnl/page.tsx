@@ -133,7 +133,7 @@ export default function PnlPage() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <StatTile
               label={`${monthLabel} Realized P&L`}
-              value={`${thisMonthTotal < 0 ? "-" : ""}$${Math.abs(thisMonthTotal).toFixed(2)}`}
+              value={`$${Math.abs(thisMonthTotal).toFixed(2)}`}
               positive={thisMonthTotal > 0 ? true : thisMonthTotal < 0 ? false : undefined}
               sub={`${thisMonthClosed} position${thisMonthClosed !== 1 ? "s" : ""} closed`}
             />

@@ -110,7 +110,11 @@ function pnlColor(v: number | null) {
 }
 function fmt(v: number | null) {
   if (v === null) return "—";
-  return `${v < 0 ? "-" : ""}$${Math.abs(v).toFixed(2)}`;
+  return `$${Math.abs(v).toFixed(2)}`;
+}
+function fmtSigned(v: number | null) {
+  if (v === null) return "—";
+  return `${v < 0 ? "-" : "+"}$${Math.abs(v).toFixed(2)}`;
 }
 function getDTE(item: TableItem): number | null {
   const expiry = parseISO(item.expiry);
@@ -135,7 +139,7 @@ function InlineSpreadChain({ chain }: { chain: SpreadRollChain }) {
       <div className="flex items-center gap-3 mb-2">
         <span className="font-semibold text-sm">Roll Chain — {chain.underlying} {chain.optionType.toUpperCase()} SPREAD</span>
         <span className={cn("font-mono font-semibold text-sm", grandTotal >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
-          {fmt(grandTotal)} running total
+          {fmtSigned(grandTotal)} running total
         </span>
       </div>
       <div className="flex flex-wrap items-stretch gap-2">
@@ -153,7 +157,7 @@ function InlineSpreadChain({ chain }: { chain: SpreadRollChain }) {
                 <div className="flex flex-col items-center justify-center gap-1">
                   <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />
                   <span className={cn("font-mono text-[10px] font-semibold", legNets[idx - 1] >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
-                    {fmt(runningTotals[idx - 1])}
+                    {fmtSigned(runningTotals[idx - 1])}
                   </span>
                 </div>
               )}
@@ -167,7 +171,7 @@ function InlineSpreadChain({ chain }: { chain: SpreadRollChain }) {
                   </div>
                 )}
                 <div className={cn("font-semibold font-mono mt-auto pt-1", legNet >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
-                  {fmt(legNet)}{!s.closeDate ? " (open)" : ""}
+                  {fmtSigned(legNet)}{!s.closeDate ? " (open)" : ""}
                 </div>
               </div>
             </Fragment>
@@ -197,7 +201,7 @@ function InlineContractChain({ chain }: { chain: RollChain }) {
       <div className="flex items-center gap-3 mb-2">
         <span className="font-semibold text-sm">Roll Chain — {chain.underlying} {chain.optionType.toUpperCase()}</span>
         <span className={cn("font-mono font-semibold text-sm", grandTotal >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
-          {fmt(grandTotal)} running total
+          {fmtSigned(grandTotal)} running total
         </span>
       </div>
       <div className="flex flex-wrap items-stretch gap-2">
@@ -211,7 +215,7 @@ function InlineContractChain({ chain }: { chain: RollChain }) {
                 <div className="flex flex-col items-center justify-center gap-1">
                   <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />
                   <span className={cn("font-mono text-[10px] font-semibold", legNets[idx - 1] >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
-                    {fmt(runningTotals[idx - 1])}
+                    {fmtSigned(runningTotals[idx - 1])}
                   </span>
                 </div>
               )}
@@ -223,7 +227,7 @@ function InlineContractChain({ chain }: { chain: RollChain }) {
                   <div className="text-muted-foreground">Close {format(parseISO(leg.closeDate), "MMM d")} · {isSold ? "Debit" : "Credit"} ${((leg.closePrice ?? 0) * qty * 100).toFixed(2)}</div>
                 )}
                 <div className={cn("font-semibold font-mono mt-auto pt-1", legNet >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
-                  {fmt(legNet)}{!leg.closeDate ? " (open)" : ""}
+                  {fmtSigned(legNet)}{!leg.closeDate ? " (open)" : ""}
                 </div>
               </div>
             </Fragment>
