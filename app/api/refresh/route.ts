@@ -115,7 +115,7 @@ export async function POST() {
   const _now = new Date();
   const today = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, "0")}-${String(_now.getDate()).padStart(2, "0")}`;
   for (const c of contracts) {
-    if (c.status === "open" && c.expiry === today) {
+    if (c.status === "open" && c.expiry <= today) {
       // Full round-trip fees: double the opening-side fees to cover the expiry settlement
       const fullFees = Math.round((c.totalFees ?? 0) * 2 * 100) / 100;
       c.totalFees = fullFees;
@@ -129,7 +129,7 @@ export async function POST() {
     }
   }
   for (const s of spreads) {
-    if (s.status === "open" && s.shortLeg.expiry === today) {
+    if (s.status === "open" && s.shortLeg.expiry <= today) {
       const fullFees = Math.round(((s.shortLeg.totalFees ?? 0) + (s.longLeg.totalFees ?? 0)) * 2 * 100) / 100;
       s.status = "expired";
       s.closeDate = nextBusinessDay(today);

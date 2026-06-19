@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 const links = [
   { href: "/trades", label: "Option Activity", icon: List },
   { href: "/pnl", label: "Monthly P&L", icon: BarChart2 },
-  { href: "/setup", label: "Setup", icon: Settings },
+  { href: "/setup", label: "Accounts", icon: Settings },
 ];
 
 export function Nav() {

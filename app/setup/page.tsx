@@ -31,7 +31,7 @@ export default function SetupPage() {
 
   return (
     <div className="space-y-6 max-w-2xl">
-      <h1 className="text-xl font-semibold">Account Setup</h1>
+      <h1 className="text-xl font-semibold">Accounts</h1>
 
       <Card>
         <CardHeader>
