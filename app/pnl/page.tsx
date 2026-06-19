@@ -12,29 +12,102 @@ import {
   BarChart,
   Bar,
   Cell,
+  XAxis,
+  YAxis,
   ResponsiveContainer,
   Tooltip,
   ReferenceLine,
 } from "recharts";
 import type { MonthlyPnl } from "@/lib/types";
 
+// Render label above/below each bar, matching its colour
+function BarValueLabel(props: {
+  x?: number; y?: number; width?: number; height?: number; value?: number;
+}) {
+  const x = Number(props.x ?? 0);
+  const y = Number(props.y ?? 0);
+  const w = Number(props.width ?? 0);
+  const h = Number(props.height ?? 0);
+  const v = Number(props.value ?? 0);
+  if (Math.abs(v) < 0.01 || w < 3) return null;
+  const label = `$${Math.abs(Math.round(v))}`;
+  const cx = x + w / 2;
+  const fill = v >= 0 ? "#16a34a" : "#dc2626";
+  if (v >= 0) {
+    return (
+      <text x={cx} y={y - 4} textAnchor="middle" fontSize={9} fontWeight={700} fill={fill}>
+        {label}
+      </text>
+    );
+  }
+  return (
+    <text
+      x={cx}
+      y={y + h + 4}
+      textAnchor="middle"
+      dominantBaseline="hanging"
+      fontSize={9}
+      fontWeight={700}
+      fill={fill}
+    >
+      {label}
+    </text>
+  );
+}
+
 function MiniBarChart({
   data,
   dataKey,
+  showLabels = false,
+  anchorAtZero = false,
 }: {
   data: MonthlyPnl[];
   dataKey: string;
+  showLabels?: boolean;
+  anchorAtZero?: boolean;
 }) {
-  if (data.length === 0) return <div className="h-14" />;
+  if (data.length === 0) return <div className="h-28" />;
+
   return (
-    <ResponsiveContainer width="100%" height={56}>
-      <BarChart data={data} margin={{ top: 4, right: 2, bottom: 0, left: 2 }} barCategoryGap="20%">
-        <ReferenceLine y={0} stroke="hsl(var(--border))" strokeDasharray="2 2" />
+    <ResponsiveContainer width="100%" height={108}>
+      <BarChart
+        data={data}
+        margin={{ top: showLabels ? 20 : 6, right: 4, bottom: 0, left: 4 }}
+        barCategoryGap="30%"
+      >
+        {!anchorAtZero && (
+          <ReferenceLine y={0} stroke="hsl(var(--border))" strokeDasharray="2 2" />
+        )}
+        {anchorAtZero && (
+          <YAxis domain={[0, "auto"]} hide />
+        )}
+        <XAxis
+          dataKey="label"
+          tick={{ fontSize: 8, fill: "hsl(var(--muted-foreground))" }}
+          tickLine={false}
+          axisLine={false}
+          interval={0}
+          height={16}
+          tickFormatter={(v: string) => String(v).slice(0, 3)}
+        />
         <Tooltip
           formatter={(v) => [`$${Number(v).toFixed(2)}`]}
-          contentStyle={{ fontSize: 11 }}
+          contentStyle={{
+            fontSize: 11,
+            padding: "3px 8px",
+            borderRadius: 6,
+            border: "1px solid hsl(var(--border))",
+          }}
+          cursor={{ fill: "hsl(var(--accent))", opacity: 0.25, rx: 2 }}
+          isAnimationActive={false}
         />
-        <Bar dataKey={dataKey} maxBarSize={16} radius={[2, 2, 0, 0]}>
+        <Bar
+          dataKey={dataKey}
+          maxBarSize={14}
+          radius={[2, 2, 0, 0]}
+          label={showLabels ? BarValueLabel : false}
+          isAnimationActive={false}
+        >
           {data.map((entry, idx) => {
             const val = Number((entry as Record<string, unknown>)[dataKey] ?? 0);
             return (
@@ -138,10 +211,15 @@ export default function PnlPage() {
               sub={`${thisMonthClosed} position${thisMonthClosed !== 1 ? "s" : ""} closed`}
             />
             <ChartTile label="Monthly P&L">
-              <MiniBarChart data={data.monthlyPnl} dataKey="realizedPnl" />
+              <MiniBarChart data={data.monthlyPnl} dataKey="realizedPnl" showLabels />
             </ChartTile>
             <ChartTile label="Cumulative P&L">
-              <MiniBarChart data={cumulativeData as MonthlyPnl[]} dataKey="cumulative" />
+              <MiniBarChart
+                data={cumulativeData as MonthlyPnl[]}
+                dataKey="cumulative"
+                showLabels
+                anchorAtZero
+              />
             </ChartTile>
           </div>
 

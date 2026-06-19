@@ -40,6 +40,10 @@ export interface Contract {
   // P&L if closed at current market price
   unrealizedPnl: number | null;
 
+  // Total commissions + regulatory fees paid on this contract (open side only while open;
+  // both sides once closed/expired)
+  totalFees: number;
+
   // True when closeDate/realizedPnl were estimated (0 DTE expiry, settlement T+1)
   estimatedClose: boolean;
 
@@ -108,6 +112,7 @@ export interface RefreshResult {
   openContracts: number;
   closedContracts: number;
   totalRealizedPnl: number;
+  totalFees: number;
   errors: { source: string; message: string }[];
   lastSync: string; // ISO datetime
 }

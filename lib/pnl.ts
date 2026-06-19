@@ -1,8 +1,12 @@
 import type { Contract, MonthlyPnl } from "./types";
 import { format, parseISO } from "date-fns";
 
+const REALIZED_STATUSES = new Set(["closed", "expired", "assigned"]);
+
 export function computeMonthlyPnl(contracts: Contract[]): MonthlyPnl[] {
-  const closed = contracts.filter((c) => c.status === "closed" && c.closeDate && c.realizedPnl !== null);
+  const closed = contracts.filter(
+    (c) => REALIZED_STATUSES.has(c.status) && c.closeDate && c.realizedPnl !== null
+  );
 
   const map = new Map<string, MonthlyPnl>();
 
@@ -38,8 +42,15 @@ export function computeMonthlyPnl(contracts: Contract[]): MonthlyPnl[] {
 
 export function computeTotals(contracts: Contract[]) {
   const open = contracts.filter((c) => c.status === "open");
-  const closed = contracts.filter((c) => c.status === "closed");
-  const totalRealizedPnl = closed.reduce((s, c) => s + (c.realizedPnl ?? 0), 0);
+  const realized = contracts.filter((c) => REALIZED_STATUSES.has(c.status));
+  const totalRealizedPnl = realized.reduce((s, c) => s + (c.realizedPnl ?? 0), 0);
   const totalUnrealizedPnl = open.reduce((s, c) => s + (c.unrealizedPnl ?? 0), 0);
-  return { openContracts: open.length, closedContracts: closed.length, totalRealizedPnl, totalUnrealizedPnl };
+  const totalFees = contracts.reduce((s, c) => s + (c.totalFees ?? 0), 0);
+  return {
+    openContracts: open.length,
+    closedContracts: realized.length,
+    totalRealizedPnl,
+    totalUnrealizedPnl,
+    totalFees,
+  };
 }

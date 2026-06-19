@@ -8,6 +8,8 @@ import { randomUUID } from "crypto";
 import { credentialStore } from "@/lib/credential-store";
 import { fidelityStore } from "@/lib/fidelity-store";
 
+const ORF_RATE = 0.02955;   // FINRA Options Regulatory Fee per contract per side
+
 type DiscoveredAccount = Account & { robinhoodAccessToken?: string };
 
 function discoverAccounts(): DiscoveredAccount[] {
@@ -46,20 +48,30 @@ function fetchRobinhoodContracts(
   }
 
   try {
-    const raw: Omit<Contract, "id" | "accountId" | "accountName" | "broker">[] =
-      JSON.parse(result.stdout?.trim() || "[]");
-    const contracts: Contract[] = raw.map((c) => ({
-      ...c,
-      id: randomUUID(),
-      accountId,
-      accountName,
-      broker: "robinhood" as const,
-      rollChainId: null,
-      rollOrder: null,
-      bidPrice: null,
-      unrealizedPnl: null,
-      estimatedClose: false,
-    }));
+    type RawContract = Omit<Contract, "id" | "accountId" | "accountName" | "broker" | "totalFees" | "rollChainId" | "rollOrder" | "bidPrice" | "unrealizedPnl" | "estimatedClose">;
+    const raw: RawContract[] = JSON.parse(result.stdout?.trim() || "[]");
+    const contracts: Contract[] = raw.map((c) => {
+      const qty = Math.abs(c.quantity);
+      const openFee = Math.round(qty * ORF_RATE * 100) / 100;
+      const isClosed = c.status !== "open";
+      const totalFees = isClosed ? Math.round(qty * ORF_RATE * 2 * 100) / 100 : openFee;
+      return {
+        ...c,
+        id: randomUUID(),
+        accountId,
+        accountName,
+        broker: "robinhood" as const,
+        rollChainId: null,
+        rollOrder: null,
+        bidPrice: null,
+        unrealizedPnl: null,
+        estimatedClose: false,
+        totalFees,
+        realizedPnl: c.realizedPnl != null
+          ? Math.round((c.realizedPnl - totalFees) * 100) / 100
+          : null,
+      };
+    });
     return { contracts, errors };
   } catch {
     errors.push(`Robinhood: could not parse output: ${result.stdout?.slice(0, 200)}`);
@@ -104,21 +116,25 @@ export async function POST() {
   const today = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, "0")}-${String(_now.getDate()).padStart(2, "0")}`;
   for (const c of contracts) {
     if (c.status === "open" && c.expiry === today) {
+      // Full round-trip fees: double the opening-side fees to cover the expiry settlement
+      const fullFees = Math.round((c.totalFees ?? 0) * 2 * 100) / 100;
+      c.totalFees = fullFees;
       c.status = "expired";
       c.closeDate = nextBusinessDay(today);
-      c.closePrice = 0;
+      c.closePrice = null;
       c.realizedPnl = c.quantity < 0
-        ? Math.round(c.openPrice * Math.abs(c.quantity) * 100 * 100) / 100
-        : Math.round(-c.openPrice * Math.abs(c.quantity) * 100 * 100) / 100;
+        ? Math.round((c.openPrice * Math.abs(c.quantity) * 100 - fullFees) * 100) / 100
+        : Math.round((-c.openPrice * Math.abs(c.quantity) * 100 - fullFees) * 100) / 100;
       c.estimatedClose = true;
     }
   }
   for (const s of spreads) {
     if (s.status === "open" && s.shortLeg.expiry === today) {
+      const fullFees = Math.round(((s.shortLeg.totalFees ?? 0) + (s.longLeg.totalFees ?? 0)) * 2 * 100) / 100;
       s.status = "expired";
       s.closeDate = nextBusinessDay(today);
-      s.closeNetCredit = 0;
-      s.realizedPnl = Math.round(s.netCredit * s.quantity * 100 * 100) / 100;
+      s.closeNetCredit = null;
+      s.realizedPnl = Math.round((s.netCredit * s.quantity * 100 - fullFees) * 100) / 100;
       s.estimatedClose = true;
     }
   }
@@ -156,29 +172,30 @@ export async function POST() {
     }
   }
 
-  // Stamp bid price + unrealized P&L onto open standalone contracts
+  // Stamp bid price + unrealized P&L onto open standalone contracts (net of opening fees)
   for (const c of contracts) {
     if (c.status !== "open") continue;
     const q = quotes[`${c.underlying}|${c.expiry}|${c.optionType}|${c.strike}`];
     if (!q) continue;
     if (c.quantity < 0) {
       c.bidPrice = q.ask;
-      c.unrealizedPnl = Math.round(((c.openPrice - q.ask) * Math.abs(c.quantity) * 100) * 100) / 100;
+      c.unrealizedPnl = Math.round(((c.openPrice - q.ask) * Math.abs(c.quantity) * 100 - (c.totalFees ?? 0)) * 100) / 100;
     } else {
       c.bidPrice = q.bid;
-      c.unrealizedPnl = Math.round(((q.bid - c.openPrice) * Math.abs(c.quantity) * 100) * 100) / 100;
+      c.unrealizedPnl = Math.round(((q.bid - c.openPrice) * Math.abs(c.quantity) * 100 - (c.totalFees ?? 0)) * 100) / 100;
     }
   }
 
-  // Stamp unrealized P&L onto open spreads (close = buy short at ask, sell long at bid)
+  // Stamp unrealized P&L onto open spreads (close = buy short at ask, sell long at bid; net of fees)
   for (const s of spreads) {
     if (s.status !== "open") continue;
     const shortQ = quotes[`${s.shortLeg.underlying}|${s.shortLeg.expiry}|${s.shortLeg.optionType}|${s.shortLeg.strike}`];
     const longQ  = quotes[`${s.longLeg.underlying}|${s.longLeg.expiry}|${s.longLeg.optionType}|${s.longLeg.strike}`];
     if (!shortQ || !longQ) continue;
     const closeDebit = shortQ.ask - longQ.bid;
+    const openFees = (s.shortLeg.totalFees ?? 0) + (s.longLeg.totalFees ?? 0);
     s.unrealizedCloseDebit = Math.round(closeDebit * 10000) / 10000;
-    s.unrealizedPnl = Math.round(((s.netCredit - closeDebit) * s.quantity * 100) * 100) / 100;
+    s.unrealizedPnl = Math.round(((s.netCredit - closeDebit) * s.quantity * 100 - openFees) * 100) / 100;
   }
 
   // One virtual contract per spread so P&L / totals aren't double-counted
@@ -189,6 +206,7 @@ export async function POST() {
     status: s.status,
     realizedPnl: s.realizedPnl,
     unrealizedPnl: s.unrealizedPnl ?? null,
+    totalFees: (s.shortLeg.totalFees ?? 0) + (s.longLeg.totalFees ?? 0),
   }));
 
   const monthlyPnl = computeMonthlyPnl([...contracts, ...spreadVirtuals]);

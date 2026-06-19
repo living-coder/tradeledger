@@ -10,10 +10,11 @@ import {
   createColumnHelper,
   SortingState,
   ColumnFiltersState,
+  type RowData,
 } from "@tanstack/react-table";
 import type { Contract, RollChain, Spread, SpreadRollChain, ContractStatus } from "@/lib/types";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Dialog } from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -27,21 +28,27 @@ import { ChevronUp, ChevronDown, Link2, ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, parseISO, differenceInDays } from "date-fns";
 
+// ── Module augmentation for table meta ───────────────────────────────────────
+declare module "@tanstack/react-table" {
+  interface TableMeta<TData extends RowData> {
+    openPnlDetail: (item: TableItem) => void;
+  }
+}
+
 // ── Normalised display row ──────────────────────────────────────────────────
 interface TableItem {
   id: string;
   underlying: string;
-  displayType: string;      // "PUT SPREAD" | "CALL SPREAD" | "put" | "call"
-  strikeLabel: string;      // "$185 / $205" or "$205"
+  displayType: string;
+  strikeLabel: string;
   expiry: string;
   quantity: number;
-  isCredit: boolean;        // true → SELL direction
+  isCredit: boolean;
   openDate: string;
-  openPrice: number;        // net credit or single-leg price
+  openPrice: number;
   closeDate: string | null;
   closePrice: number | null;
   realizedPnl: number | null;
-  // Unrealized — populated when market quotes are available
   unrealizedClosePrice: number | null;
   unrealizedPnl: number | null;
   estimatedClose: boolean;
@@ -123,10 +130,291 @@ function getDTE(item: TableItem): number | null {
   return null;
 }
 
+// ── P&L Breakdown Dialog ─────────────────────────────────────────────────────
+function Row({ label, value, sub, bold, positive }: {
+  label: React.ReactNode;
+  value: React.ReactNode;
+  sub?: string;
+  bold?: boolean;
+  positive?: boolean;
+}) {
+  return (
+    <div className={cn("flex justify-between items-start gap-4", bold && "font-semibold")}>
+      <div>
+        <span className={bold ? "" : "text-muted-foreground"}>{label}</span>
+        {sub && <div className="text-[10px] text-muted-foreground mt-0.5 pl-2">{sub}</div>}
+      </div>
+      <span className={cn(
+        "font-mono shrink-0",
+        positive === true && "text-emerald-600 dark:text-emerald-400",
+        positive === false && "text-red-500 dark:text-red-400",
+        positive === undefined && bold && "text-foreground",
+      )}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function Divider() {
+  return <div className="border-t my-2" />;
+}
+
+function PnlBreakdownDialog({ item, onClose }: { item: TableItem | null; onClose: () => void }) {
+  if (!item) return null;
+
+  const src = item.source;
+  const isClosed = item.status !== "open";
+  const isExpired = item.status === "expired";
+  const sides = isClosed ? 2 : 1;
+  const pnlValue = item.realizedPnl ?? item.unrealizedPnl;
+  const pnlLabel = item.realizedPnl !== null ? "Net Realized P&L" : "Net Unrealized P&L";
+
+  // ── SPREAD ─────────────────────────────────────────────────────────
+  if (src.kind === "spread") {
+    const s = src.data;
+    const qty = s.quantity;
+    const shortStrike = s.shortLeg.strike;
+    const longStrike = s.longLeg.strike;
+    const openShortCredit = s.shortLeg.openPrice * qty * 100;
+    const openLongDebit = s.longLeg.openPrice * qty * 100;
+    const netCredit = s.netCredit * qty * 100;
+
+    const hasClose = s.closeDate !== null;
+    const closeNetDebit = s.closeNetCredit !== null ? s.closeNetCredit * qty * 100 : null;
+    const grossPnl = closeNetDebit !== null
+      ? Math.round((netCredit - closeNetDebit) * 100) / 100
+      : isExpired
+      ? Math.round(netCredit * 100) / 100
+      : null;
+
+    const orf = Math.round(qty * 0.02955 * sides * 2 * 100) / 100;
+    const contractFee = s.broker === "fidelity"
+      ? Math.round(qty * 0.65 * sides * 2 * 100) / 100
+      : 0;
+    const totalFees = (s.shortLeg.totalFees ?? 0) + (s.longLeg.totalFees ?? 0);
+
+    return (
+      <Dialog
+        open
+        onClose={onClose}
+        title={`${s.underlying} ${s.optionType.toUpperCase()} SPREAD — P&L Breakdown`}
+        className="max-w-md"
+      >
+        <div className="text-sm space-y-3">
+          {/* Header info */}
+          <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground pb-1">
+            <span>Strikes <span className="font-mono text-foreground">${Math.max(shortStrike, longStrike)} / ${Math.min(shortStrike, longStrike)}</span></span>
+            <span>Qty <span className="font-mono text-foreground">{qty}</span></span>
+            <span>Expiry <span className="font-mono text-foreground">{format(parseISO(s.shortLeg.expiry), "MMM d, yyyy")}</span></span>
+            <span>Account <span className="text-foreground">{BROKER_LABEL[s.broker] ?? s.broker}</span></span>
+          </div>
+
+          <Divider />
+
+          {/* Open */}
+          <div>
+            <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+              Open · {format(parseISO(s.openDate), "MMM d, yyyy")}
+            </div>
+            <div className="space-y-1.5 pl-2">
+              <Row
+                label={`Short $${shortStrike} ${s.optionType} — SELL ${qty} @ $${s.shortLeg.openPrice.toFixed(2)}`}
+                value={`+$${openShortCredit.toFixed(2)}`}
+                positive={true}
+              />
+              <Row
+                label={`Long $${longStrike} ${s.optionType} — BUY ${qty} @ $${s.longLeg.openPrice.toFixed(2)}`}
+                value={`-$${openLongDebit.toFixed(2)}`}
+                positive={false}
+              />
+              <div className="flex justify-between border-t pt-1.5 font-medium">
+                <span>Net Credit</span>
+                <span className={cn("font-mono", netCredit >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
+                  {netCredit >= 0 ? "+" : "-"}${Math.abs(netCredit).toFixed(2)}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Close */}
+          {(hasClose || isExpired) && (
+            <div>
+              <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                {isExpired ? "Expired" : "Close"} · {item.estimatedClose ? "~" : ""}
+                {s.closeDate ? format(parseISO(s.closeDate), "MMM d, yyyy") : ""}
+                {item.estimatedClose && <span className="ml-1 normal-case font-normal">(estimated settlement)</span>}
+              </div>
+              {isExpired ? (
+                <div className="pl-2 text-muted-foreground text-xs">Expired worthless — no closing transaction</div>
+              ) : (
+                <div className="space-y-1.5 pl-2">
+                  {s.shortLeg.closePrice !== null && (
+                    <Row
+                      label={`Short $${shortStrike} ${s.optionType} — BUY ${qty} @ $${s.shortLeg.closePrice.toFixed(2)}`}
+                      value={`-$${(s.shortLeg.closePrice * qty * 100).toFixed(2)}`}
+                      positive={false}
+                    />
+                  )}
+                  {s.longLeg.closePrice !== null && (
+                    <Row
+                      label={`Long $${longStrike} ${s.optionType} — SELL ${qty} @ $${s.longLeg.closePrice.toFixed(2)}`}
+                      value={`+$${(s.longLeg.closePrice * qty * 100).toFixed(2)}`}
+                      positive={true}
+                    />
+                  )}
+                  {closeNetDebit !== null && (
+                    <div className="flex justify-between border-t pt-1.5 font-medium">
+                      <span>Net {closeNetDebit >= 0 ? "Debit" : "Credit"}</span>
+                      <span className={cn("font-mono", closeNetDebit > 0 ? "text-red-500 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400")}>
+                        {closeNetDebit > 0 ? "-" : "+"}${Math.abs(closeNetDebit).toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          <Divider />
+
+          {/* Summary */}
+          <div className="space-y-1.5">
+            {grossPnl !== null && (
+              <Row
+                label="Gross P&L"
+                value={`${grossPnl >= 0 ? "+" : "-"}$${Math.abs(grossPnl).toFixed(2)}`}
+                positive={grossPnl >= 0}
+              />
+            )}
+            <Row
+              label="Fees & Commissions"
+              value={`-$${totalFees.toFixed(2)}`}
+              positive={false}
+              sub={[
+                `ORF $${orf.toFixed(2)}`,
+                contractFee > 0 ? `Fidelity $${contractFee.toFixed(2)}` : null,
+                `(both legs · ${sides === 1 ? "open side" : "open + close"})`,
+              ].filter(Boolean).join(" · ")}
+            />
+            <Divider />
+            <Row
+              label={pnlLabel}
+              value={fmtSigned(pnlValue)}
+              bold
+              positive={pnlValue !== null ? pnlValue >= 0 : undefined}
+            />
+          </div>
+        </div>
+      </Dialog>
+    );
+  }
+
+  // ── CONTRACT ────────────────────────────────────────────────────────
+  const c = src.data;
+  const qty = Math.abs(c.quantity);
+  const isShort = c.quantity < 0;
+  const openValue = c.openPrice * qty * 100;
+  const closeValue = c.closePrice !== null ? c.closePrice * qty * 100 : null;
+  const grossPnl = closeValue !== null
+    ? Math.round((isShort ? openValue - closeValue : closeValue - openValue) * 100) / 100
+    : isExpired
+    ? Math.round((isShort ? openValue : -openValue) * 100) / 100
+    : null;
+  const orf = Math.round(qty * 0.02955 * sides * 100) / 100;
+  const contractFee = c.broker === "fidelity" ? Math.round(qty * 0.65 * sides * 100) / 100 : 0;
+  const totalFees = c.totalFees ?? 0;
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={`${c.underlying} ${c.optionType.toUpperCase()} $${c.strike} — P&L Breakdown`}
+      className="max-w-md"
+    >
+      <div className="text-sm space-y-3">
+        {/* Header info */}
+        <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground pb-1">
+          <span>Strike <span className="font-mono text-foreground">${c.strike.toFixed(2)}</span></span>
+          <span>Qty <span className="font-mono text-foreground">{qty}</span></span>
+          <span>Expiry <span className="font-mono text-foreground">{format(parseISO(c.expiry), "MMM d, yyyy")}</span></span>
+          <span>Account <span className="text-foreground">{BROKER_LABEL[c.broker] ?? c.broker}</span></span>
+        </div>
+
+        <Divider />
+
+        {/* Open */}
+        <div>
+          <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+            Open · {format(parseISO(c.openDate), "MMM d, yyyy")}
+          </div>
+          <div className="pl-2">
+            <Row
+              label={`${isShort ? "SELL" : "BUY"} ${qty} contract${qty !== 1 ? "s" : ""} @ $${c.openPrice.toFixed(2)}`}
+              value={`${isShort ? "+" : "-"}$${openValue.toFixed(2)}`}
+              positive={isShort}
+            />
+          </div>
+        </div>
+
+        {/* Close */}
+        {(c.closeDate || isExpired) && (
+          <div>
+            <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+              {isExpired ? "Expired" : "Close"} · {item.estimatedClose ? "~" : ""}
+              {c.closeDate ? format(parseISO(c.closeDate), "MMM d, yyyy") : ""}
+              {item.estimatedClose && <span className="ml-1 normal-case font-normal">(estimated settlement)</span>}
+            </div>
+            {isExpired ? (
+              <div className="pl-2 text-muted-foreground text-xs">Expired worthless — no closing transaction</div>
+            ) : closeValue !== null ? (
+              <div className="pl-2">
+                <Row
+                  label={`${isShort ? "BUY" : "SELL"} ${qty} contract${qty !== 1 ? "s" : ""} @ $${c.closePrice!.toFixed(2)}`}
+                  value={`${isShort ? "-" : "+"}$${closeValue.toFixed(2)}`}
+                  positive={!isShort}
+                />
+              </div>
+            ) : null}
+          </div>
+        )}
+
+        <Divider />
+
+        {/* Summary */}
+        <div className="space-y-1.5">
+          {grossPnl !== null && (
+            <Row
+              label="Gross P&L"
+              value={`${grossPnl >= 0 ? "+" : "-"}$${Math.abs(grossPnl).toFixed(2)}`}
+              positive={grossPnl >= 0}
+            />
+          )}
+          <Row
+            label="Fees & Commissions"
+            value={`-$${totalFees.toFixed(2)}`}
+            positive={false}
+            sub={[
+              `ORF $${orf.toFixed(2)}`,
+              contractFee > 0 ? `Fidelity $${contractFee.toFixed(2)}` : null,
+              `(${sides === 1 ? "open side" : "open + close"})`,
+            ].filter(Boolean).join(" · ")}
+          />
+          <Divider />
+          <Row
+            label={pnlLabel}
+            value={fmtSigned(pnlValue)}
+            bold
+            positive={pnlValue !== null ? pnlValue >= 0 : undefined}
+          />
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
 // ── Inline roll chain panel ──────────────────────────────────────────────────
 function InlineSpreadChain({ chain }: { chain: SpreadRollChain }) {
-  // Cash-flow per leg: credit received on open minus debit paid on close.
-  // realizedPnl is nulled on all chain legs by the detector, so we compute from raw prices.
   const legNets = chain.legs.map((s) =>
     (s.netCredit - (s.closeNetCredit ?? 0)) * s.quantity * 100
   );
@@ -135,7 +423,7 @@ function InlineSpreadChain({ chain }: { chain: SpreadRollChain }) {
   const grandTotal = runningTotals[runningTotals.length - 1] ?? 0;
 
   return (
-    <div className="bg-blue-50/60 dark:bg-blue-950/20 border-y border-blue-200/60 dark:border-blue-800/40 px-4 py-3">
+    <div className="bg-blue-50/60 dark:bg-blue-950/20 border-y border-blue-200/60 dark:border-blue-800/40 py-3 pr-4 pl-10">
       <div className="flex items-center gap-3 mb-2">
         <span className="font-semibold text-sm">Roll Chain — {chain.underlying} {chain.optionType.toUpperCase()} SPREAD</span>
         <span className={cn("font-mono font-semibold text-sm", grandTotal >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
@@ -183,21 +471,19 @@ function InlineSpreadChain({ chain }: { chain: SpreadRollChain }) {
 }
 
 function InlineContractChain({ chain }: { chain: RollChain }) {
-  // Per-leg cash flow: for sold legs, profit = (openPrice - closePrice) × |qty| × 100
   const legNets = chain.legs.map((leg) => {
     if (leg.realizedPnl !== null) return leg.realizedPnl;
-    // Open final leg: show credit/debit received at open (unrealized)
     const qty = Math.abs(leg.quantity);
     return leg.quantity < 0
-      ? leg.openPrice * qty * 100        // credit received (positive)
-      : -(leg.openPrice * qty * 100);    // debit paid (negative)
+      ? leg.openPrice * qty * 100
+      : -(leg.openPrice * qty * 100);
   });
   const runningTotals: number[] = [];
   legNets.forEach((n, i) => runningTotals.push((runningTotals[i - 1] ?? 0) + n));
   const grandTotal = runningTotals[runningTotals.length - 1] ?? 0;
 
   return (
-    <div className="bg-blue-50/60 dark:bg-blue-950/20 border-y border-blue-200/60 dark:border-blue-800/40 px-4 py-3">
+    <div className="bg-blue-50/60 dark:bg-blue-950/20 border-y border-blue-200/60 dark:border-blue-800/40 py-3 pr-4 pl-10">
       <div className="flex items-center gap-3 mb-2">
         <span className="font-semibold text-sm">Roll Chain — {chain.underlying} {chain.optionType.toUpperCase()}</span>
         <span className={cn("font-mono font-semibold text-sm", grandTotal >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
@@ -245,7 +531,7 @@ const columns = [
   col.display({
     id: "roll",
     header: "",
-    cell: () => null, // rendered via row click handler; icon injected in row
+    cell: () => null,
     enableSorting: false,
     size: 32,
   }),
@@ -327,8 +613,8 @@ const columns = [
   col.accessor("closePrice", {
     header: "Close $",
     cell: ({ row }) => {
-      const { closePrice, unrealizedClosePrice } = row.original;
-      if (closePrice !== null)
+      const { closePrice, unrealizedClosePrice, estimatedClose } = row.original;
+      if (closePrice !== null && !estimatedClose)
         return <span className="font-mono text-xs">${Math.abs(closePrice).toFixed(2)}</span>;
       if (unrealizedClosePrice !== null)
         return (
@@ -341,17 +627,25 @@ const columns = [
   }),
   col.accessor("realizedPnl", {
     header: "P&L",
-    cell: ({ row }) => {
+    cell: ({ row, table }) => {
       const { realizedPnl, unrealizedPnl } = row.original;
-      if (realizedPnl !== null)
-        return <span className={cn("font-mono font-semibold text-xs", pnlColor(realizedPnl))}>{fmt(realizedPnl)}</span>;
-      if (unrealizedPnl !== null)
-        return (
-          <span className={cn("font-mono font-semibold text-xs", pnlColor(unrealizedPnl))} title="Unrealized P&L at current market prices">
-            {fmt(unrealizedPnl)}
-          </span>
-        );
-      return <span className="text-muted-foreground">—</span>;
+      const pnlValue = realizedPnl ?? unrealizedPnl;
+      if (pnlValue === null) return <span className="text-muted-foreground">—</span>;
+      return (
+        <button
+          className={cn(
+            "font-mono font-semibold text-xs hover:underline cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-sm px-0.5",
+            pnlColor(pnlValue)
+          )}
+          onClick={(e) => {
+            e.stopPropagation();
+            table.options.meta?.openPnlDetail(row.original);
+          }}
+          title="Click for breakdown"
+        >
+          {fmt(pnlValue)}
+        </button>
+      );
     },
     sortingFn: (a, b) => {
       const av = a.original.realizedPnl ?? a.original.unrealizedPnl ?? -Infinity;
@@ -392,6 +686,7 @@ export function TradeLogTable({ contracts, spreads, rollChains, spreadRollChains
   const [globalFilter, setGlobalFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [pnlDetail, setPnlDetail] = useState<TableItem | null>(null);
 
   const spreadChainMap = useMemo(() => new Map(spreadRollChains.map((c) => [c.id, c])), [spreadRollChains]);
   const contractChainMap = useMemo(() => new Map(rollChains.map((c) => [c.id, c])), [rollChains]);
@@ -400,7 +695,6 @@ export function TradeLogTable({ contracts, spreads, rollChains, spreadRollChains
     const items: TableItem[] = [
       ...spreads
         .filter((s) => {
-          // For chained spreads, only show the final (current) leg as a top-level row
           if (!s.rollChainId) return true;
           const chain = spreadChainMap.get(s.rollChainId);
           if (!chain) return true;
@@ -408,8 +702,6 @@ export function TradeLogTable({ contracts, spreads, rollChains, spreadRollChains
         })
         .map((s) => {
           const item = itemFromSpread(s);
-          // Adjust P&L to include closed legs' cash flows from the chain.
-          // Applies to both unrealized (live quote) and realized (expired 0 DTE) final legs.
           if (s.rollChainId) {
             const chain = spreadChainMap.get(s.rollChainId);
             if (chain) {
@@ -441,6 +733,7 @@ export function TradeLogTable({ contracts, spreads, rollChains, spreadRollChains
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
+    meta: { openPnlDetail: (item) => setPnlDetail(item) },
   });
 
   function toggleChain(chainId: string) {
@@ -509,7 +802,6 @@ export function TradeLogTable({ contracts, spreads, rollChains, spreadRollChains
                 const isChainable = !!chainId;
                 const isExpanded = chainId ? expanded[chainId] : false;
 
-                // Render the chain panel once, after the first row that has it
                 let chainEl: React.ReactNode = null;
                 if (chainId && isExpanded && !renderedChains.has(chainId)) {
                   renderedChains.add(chainId);
@@ -540,7 +832,6 @@ export function TradeLogTable({ contracts, spreads, rollChains, spreadRollChains
                       onClick={() => chainId && toggleChain(chainId)}
                     >
                       {row.getVisibleCells().map((cell) => {
-                        // Inject the roll icon into the first "roll" column
                         if (cell.column.id === "roll" && isChainable) {
                           return (
                             <TableCell key={cell.id} className="py-2 w-8">
@@ -563,6 +854,8 @@ export function TradeLogTable({ contracts, spreads, rollChains, spreadRollChains
           </TableBody>
         </Table>
       </div>
+
+      <PnlBreakdownDialog item={pnlDetail} onClose={() => setPnlDetail(null)} />
     </div>
   );
 }

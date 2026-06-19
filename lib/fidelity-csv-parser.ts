@@ -1,6 +1,9 @@
 import { randomUUID } from "crypto";
 import type { Contract } from "./types";
 
+const ORF_RATE = 0.02955;      // FINRA Options Regulatory Fee per contract per side
+const FIDELITY_RATE = 0.65;    // Fidelity per contract commission per side
+
 function parseSymbol(symbol: string): {
   underlying: string;
   expiry: string;
@@ -114,6 +117,7 @@ export function parseFidelityCsv(
     const key = `${underlying}|${expiry}|${optionType}|${strike}`;
 
     if (row.isOpen) {
+      const feePerSide = Math.round(Math.abs(row.quantity) * (FIDELITY_RATE + ORF_RATE) * 100) / 100;
       opens.push({
         id: randomUUID(),
         accountId,
@@ -134,6 +138,7 @@ export function parseFidelityCsv(
         realizedPnl: null,
         bidPrice: null,
         unrealizedPnl: null,
+        totalFees: feePerSide,   // opening-side fees only while open
         estimatedClose: false,
         rollChainId: null,
         rollOrder: null,
@@ -146,9 +151,11 @@ export function parseFidelityCsv(
         match.closePrice = row.price;
         match.closeCommission = row.commission + row.fees;
         match.status = "closed";
-        const totalFees = match.openCommission + match.closeCommission;
+        // Closing side fees; total = open + close sides
+        const closeFee = Math.round(Math.abs(row.quantity) * (FIDELITY_RATE + ORF_RATE) * 100) / 100;
+        match.totalFees = match.totalFees + closeFee;
         match.realizedPnl = Math.round(
-          ((match.closePrice - match.openPrice) * match.quantity * 100 - totalFees) * 100
+          ((match.closePrice - match.openPrice) * match.quantity * 100 - match.totalFees) * 100
         ) / 100;
       } else {
         errors.push(`Close without matching open: ${row.symbol} on ${row.date}`);

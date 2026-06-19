@@ -46,6 +46,7 @@ export default function TradesPage() {
   }, []);
 
   const totalPnl = data?.totalRealizedPnl ?? 0;
+  const totalFees = data?.totalFees ?? 0;
 
   const { marginUsed, totalCredits } = useMemo(() => {
     if (!data) return { marginUsed: 0, totalCredits: 0 };
@@ -99,7 +100,7 @@ export default function TradesPage() {
 
       {data && (
         <>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
             <StatCard
               label="Realized P&L"
               value={`$${Math.abs(totalPnl).toFixed(2)}`}
@@ -122,6 +123,12 @@ export default function TradesPage() {
             <StatCard
               label="Roll Chains"
               value={String(data.rollChains.length + data.spreadRollChains.length)}
+            />
+            <StatCard
+              label="Comm. & Fees"
+              value={`$${totalFees.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+              sub="ORF + contract fees"
+              positive={false}
             />
           </div>
 
