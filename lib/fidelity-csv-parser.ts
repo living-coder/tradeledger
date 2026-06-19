@@ -134,6 +134,7 @@ export function parseFidelityCsv(
         realizedPnl: null,
         bidPrice: null,
         unrealizedPnl: null,
+        estimatedClose: false,
         rollChainId: null,
         rollOrder: null,
         _key: key,

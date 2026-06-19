@@ -80,6 +80,7 @@ export function detectSpreads(contracts: Contract[]): {
         realizedPnl,
         unrealizedPnl: null,
         unrealizedCloseDebit: null,
+        estimatedClose: false,
         rollChainId: null,
         rollOrder: null,
       });

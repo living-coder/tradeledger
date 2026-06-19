@@ -102,7 +102,7 @@ export default function TradesPage() {
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             <StatCard
               label="Realized P&L"
-              value={`${totalPnl >= 0 ? "+" : ""}$${Math.abs(totalPnl).toFixed(2)}`}
+              value={`${totalPnl < 0 ? "-" : ""}$${Math.abs(totalPnl).toFixed(2)}`}
               positive={totalPnl >= 0}
             />
             <StatCard

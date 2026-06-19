@@ -40,6 +40,9 @@ export interface Contract {
   // P&L if closed at current market price
   unrealizedPnl: number | null;
 
+  // True when closeDate/realizedPnl were estimated (0 DTE expiry, settlement T+1)
+  estimatedClose: boolean;
+
   rollChainId: string | null;
   rollOrder: number | null; // 0 = original, 1 = first roll, ...
 }
@@ -72,6 +75,7 @@ export interface Spread {
   realizedPnl: number | null;
   unrealizedPnl: number | null;          // P&L if closed at current market
   unrealizedCloseDebit: number | null;   // net debit to close (shortAsk - longBid)
+  estimatedClose: boolean;               // true when closeDate was estimated (0 DTE)
   rollChainId: string | null;
   rollOrder: number | null;
 }

@@ -58,6 +58,7 @@ function fetchRobinhoodContracts(
       rollOrder: null,
       bidPrice: null,
       unrealizedPnl: null,
+      estimatedClose: false,
     }));
     return { contracts, errors };
   } catch {
@@ -91,6 +92,35 @@ export async function POST() {
   const { spreads: rawSpreads, standalone } = detectSpreads(allContracts);
   const { spreads, chains: spreadRollChains } = detectSpreadRollChains(rawSpreads);
   const { contracts, rollChains } = detectRollChains(standalone);
+
+  // ── Mark 0 DTE positions as expired (no quotes needed; settlement T+1) ──────
+  function nextBusinessDay(fromIso: string): string {
+    const d = new Date(fromIso + "T12:00:00Z");
+    d.setUTCDate(d.getUTCDate() + 1);
+    while (d.getUTCDay() === 0 || d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() + 1);
+    return d.toISOString().slice(0, 10);
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  for (const c of contracts) {
+    if (c.status === "open" && c.expiry === today) {
+      c.status = "expired";
+      c.closeDate = nextBusinessDay(today);
+      c.closePrice = 0;
+      c.realizedPnl = c.quantity < 0
+        ? Math.round(c.openPrice * Math.abs(c.quantity) * 100 * 100) / 100
+        : Math.round(-c.openPrice * Math.abs(c.quantity) * 100 * 100) / 100;
+      c.estimatedClose = true;
+    }
+  }
+  for (const s of spreads) {
+    if (s.status === "open" && s.shortLeg.expiry === today) {
+      s.status = "expired";
+      s.closeDate = nextBusinessDay(today);
+      s.closeNetCredit = 0;
+      s.realizedPnl = Math.round(s.netCredit * s.quantity * 100 * 100) / 100;
+      s.estimatedClose = true;
+    }
+  }
 
   // ── Fetch live market quotes for open positions ────────────────────────────
   type QuoteEntry = { bid: number; ask: number };

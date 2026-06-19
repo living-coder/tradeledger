@@ -41,9 +41,10 @@ interface TableItem {
   closeDate: string | null;
   closePrice: number | null;
   realizedPnl: number | null;
-  // Unrealized (amber) — populated when market quotes are available
+  // Unrealized — populated when market quotes are available
   unrealizedClosePrice: number | null;
   unrealizedPnl: number | null;
+  estimatedClose: boolean;
   status: ContractStatus;
   broker: string;
   rollChainId: string | null;
@@ -59,7 +60,7 @@ function itemFromSpread(s: Spread): TableItem {
     id: s.id,
     underlying: s.underlying,
     displayType: `${s.optionType === "put" ? "PUT" : "CALL"} SPREAD`,
-    strikeLabel: `$${hi} / $${lo}`,
+    strikeLabel: `$${hi}/$${lo}`,
     expiry: s.shortLeg.expiry,
     quantity: s.quantity,
     isCredit: s.netCredit >= 0,
@@ -70,6 +71,7 @@ function itemFromSpread(s: Spread): TableItem {
     realizedPnl: s.realizedPnl,
     unrealizedClosePrice: s.unrealizedCloseDebit ?? null,
     unrealizedPnl: s.unrealizedPnl ?? null,
+    estimatedClose: s.estimatedClose,
     status: s.status,
     broker: s.broker,
     rollChainId: s.rollChainId,
@@ -93,6 +95,7 @@ function itemFromContract(c: Contract): TableItem {
     realizedPnl: c.realizedPnl,
     unrealizedClosePrice: c.bidPrice ?? null,
     unrealizedPnl: c.unrealizedPnl ?? null,
+    estimatedClose: c.estimatedClose,
     status: c.status,
     broker: c.broker,
     rollChainId: c.rollChainId,
@@ -107,7 +110,7 @@ function pnlColor(v: number | null) {
 }
 function fmt(v: number | null) {
   if (v === null) return "—";
-  return `${v >= 0 ? "+" : ""}$${Math.abs(v).toFixed(2)}`;
+  return `${v < 0 ? "-" : ""}$${Math.abs(v).toFixed(2)}`;
 }
 function getDTE(item: TableItem): number | null {
   const expiry = parseISO(item.expiry);
@@ -286,7 +289,7 @@ const columns = [
     enableSorting: false,
   }),
   col.accessor("quantity", {
-    header: "Side",
+    header: "Qty",
     cell: (i) => {
       const qty = i.getValue();
       const isCredit = i.row.original.isCredit;
@@ -307,7 +310,14 @@ const columns = [
   }),
   col.accessor("closeDate", {
     header: "Closed",
-    cell: (i) => <span className="text-xs">{i.getValue() ? format(parseISO(i.getValue()!), "MMM dd, yy") : "—"}</span>,
+    cell: ({ row }) => {
+      const { closeDate, estimatedClose } = row.original;
+      if (!closeDate) return <span className="text-xs">—</span>;
+      const label = format(parseISO(closeDate), "MMM dd, yy");
+      return estimatedClose
+        ? <span className="text-xs text-muted-foreground" title="Estimated settlement (next business day)">~{label}</span>
+        : <span className="text-xs">{label}</span>;
+    },
     sortingFn: (a, b) => (a.original.closeDate ?? "").localeCompare(b.original.closeDate ?? ""),
   }),
   col.accessor("closePrice", {
@@ -394,15 +404,19 @@ export function TradeLogTable({ contracts, spreads, rollChains, spreadRollChains
         })
         .map((s) => {
           const item = itemFromSpread(s);
-          // Adjust unrealized P&L to include closed legs' cash flows from the chain.
-          // Formula: grandTotal (all credits/debits) - current close debit = chain P&L estimate.
-          if (s.rollChainId && item.unrealizedPnl !== null) {
+          // Adjust P&L to include closed legs' cash flows from the chain.
+          // Applies to both unrealized (live quote) and realized (expired 0 DTE) final legs.
+          if (s.rollChainId) {
             const chain = spreadChainMap.get(s.rollChainId);
             if (chain) {
               const closedLegTotal = chain.legs
                 .filter((leg) => leg.id !== s.id)
                 .reduce((sum, leg) => sum + (leg.netCredit - (leg.closeNetCredit ?? 0)) * leg.quantity * 100, 0);
-              item.unrealizedPnl = Math.round((closedLegTotal + item.unrealizedPnl) * 100) / 100;
+              if (item.unrealizedPnl !== null) {
+                item.unrealizedPnl = Math.round((closedLegTotal + item.unrealizedPnl) * 100) / 100;
+              } else if (item.realizedPnl !== null) {
+                item.realizedPnl = Math.round((closedLegTotal + item.realizedPnl) * 100) / 100;
+              }
             }
           }
           return item;
