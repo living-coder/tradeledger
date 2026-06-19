@@ -118,12 +118,21 @@ function getDTE(item: TableItem): number | null {
 
 // ── Inline roll chain panel ──────────────────────────────────────────────────
 function InlineSpreadChain({ chain }: { chain: SpreadRollChain }) {
+  // Cash-flow per leg: credit received on open minus debit paid on close.
+  // realizedPnl is nulled on all chain legs by the detector, so we compute from raw prices.
+  const legNets = chain.legs.map((s) =>
+    (s.netCredit - (s.closeNetCredit ?? 0)) * s.quantity * 100
+  );
+  const runningTotals: number[] = [];
+  legNets.forEach((n, i) => runningTotals.push((runningTotals[i - 1] ?? 0) + n));
+  const grandTotal = runningTotals[runningTotals.length - 1] ?? 0;
+
   return (
     <div className="bg-blue-50/60 dark:bg-blue-950/20 border-y border-blue-200/60 dark:border-blue-800/40 px-4 py-3">
       <div className="flex items-center gap-3 mb-2">
         <span className="font-semibold text-sm">Roll Chain — {chain.underlying} {chain.optionType} spread</span>
-        <span className={cn("font-mono font-semibold text-sm", chain.totalRealizedPnl >= 0 ? "text-emerald-600" : "text-red-500")}>
-          {fmt(chain.totalRealizedPnl)} total
+        <span className={cn("font-mono font-semibold text-sm", grandTotal >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
+          {fmt(grandTotal)} running total
         </span>
       </div>
       <div className="flex flex-wrap items-stretch gap-2">
@@ -134,25 +143,30 @@ function InlineSpreadChain({ chain }: { chain: SpreadRollChain }) {
           const closeLabel = s.closeNetCredit !== null
             ? (s.closeNetCredit > 0 ? "Debit" : "Credit")
             : null;
+          const legNet = legNets[idx];
+          const cumulative = runningTotals[idx];
           return (
             <Fragment key={s.id}>
               {idx > 0 && (
-                <div className="flex items-center">
+                <div className="flex flex-col items-center justify-center gap-1">
                   <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />
+                  <span className={cn("font-mono text-[10px] font-semibold", cumulative >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
+                    {fmt(runningTotals[idx - 1])}
+                  </span>
                 </div>
               )}
               <div className="border rounded-md px-3 py-2 bg-background space-y-0.5 text-xs min-w-[200px] flex flex-col">
                 <div className="font-mono font-semibold">${hi} / ${lo}</div>
                 <div className="text-muted-foreground text-[11px]">Expiry {format(parseISO(s.shortLeg.expiry), "MMMM dd, yyyy")}</div>
-                <div className="text-muted-foreground">Open {format(parseISO(s.openDate), "MMM d")} · {openLabel} ${Math.abs(s.netCredit).toFixed(2)}</div>
+                <div className="text-muted-foreground">Open {format(parseISO(s.openDate), "MMM d")} · {openLabel} ${Math.abs(s.netCredit * s.quantity * 100).toFixed(2)}</div>
                 {s.closeDate && (
                   <div className="text-muted-foreground">
-                    Close {format(parseISO(s.closeDate), "MMM d")} · {closeLabel} {s.closeNetCredit !== null ? `$${Math.abs(s.closeNetCredit).toFixed(2)}` : "—"}
+                    Close {format(parseISO(s.closeDate), "MMM d")} · {closeLabel} {s.closeNetCredit !== null ? `$${Math.abs(s.closeNetCredit * s.quantity * 100).toFixed(2)}` : "—"}
                   </div>
                 )}
-                {s.realizedPnl !== null && (
-                  <div className={cn("font-semibold font-mono mt-auto pt-1", s.realizedPnl >= 0 ? "text-emerald-600" : "text-red-500")}>{fmt(s.realizedPnl)}</div>
-                )}
+                <div className={cn("font-semibold font-mono mt-auto pt-1", legNet >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
+                  {fmt(legNet)}{!s.closeDate ? " (open)" : ""}
+                </div>
               </div>
             </Fragment>
           );
@@ -163,34 +177,53 @@ function InlineSpreadChain({ chain }: { chain: SpreadRollChain }) {
 }
 
 function InlineContractChain({ chain }: { chain: RollChain }) {
+  // Per-leg cash flow: for sold legs, profit = (openPrice - closePrice) × |qty| × 100
+  const legNets = chain.legs.map((leg) => {
+    if (leg.realizedPnl !== null) return leg.realizedPnl;
+    // Open final leg: show credit/debit received at open (unrealized)
+    const qty = Math.abs(leg.quantity);
+    return leg.quantity < 0
+      ? leg.openPrice * qty * 100        // credit received (positive)
+      : -(leg.openPrice * qty * 100);    // debit paid (negative)
+  });
+  const runningTotals: number[] = [];
+  legNets.forEach((n, i) => runningTotals.push((runningTotals[i - 1] ?? 0) + n));
+  const grandTotal = runningTotals[runningTotals.length - 1] ?? 0;
+
   return (
     <div className="bg-blue-50/60 dark:bg-blue-950/20 border-y border-blue-200/60 dark:border-blue-800/40 px-4 py-3">
       <div className="flex items-center gap-3 mb-2">
         <span className="font-semibold text-sm">Roll Chain — {chain.underlying} {chain.optionType}</span>
-        <span className={cn("font-mono font-semibold text-sm", chain.totalRealizedPnl >= 0 ? "text-emerald-600" : "text-red-500")}>
-          {fmt(chain.totalRealizedPnl)} total
+        <span className={cn("font-mono font-semibold text-sm", grandTotal >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
+          {fmt(grandTotal)} running total
         </span>
       </div>
       <div className="flex flex-wrap items-stretch gap-2">
         {chain.legs.map((leg, idx) => {
           const isSold = leg.quantity < 0;
+          const qty = Math.abs(leg.quantity);
+          const legNet = legNets[idx];
+          const cumulative = runningTotals[idx];
           return (
             <Fragment key={leg.id}>
               {idx > 0 && (
-                <div className="flex items-center">
+                <div className="flex flex-col items-center justify-center gap-1">
                   <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />
+                  <span className={cn("font-mono text-[10px] font-semibold", cumulative >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
+                    {fmt(runningTotals[idx - 1])}
+                  </span>
                 </div>
               )}
               <div className="border rounded-md px-3 py-2 bg-background space-y-0.5 text-xs min-w-[180px] flex flex-col">
                 <div className="font-mono font-semibold">${leg.strike}</div>
                 <div className="text-muted-foreground text-[11px]">Expiry {format(parseISO(leg.expiry), "MMMM dd, yyyy")}</div>
-                <div className="text-muted-foreground">Open {format(parseISO(leg.openDate), "MMM d")} · {isSold ? "Credit" : "Debit"} ${leg.openPrice.toFixed(2)}</div>
+                <div className="text-muted-foreground">Open {format(parseISO(leg.openDate), "MMM d")} · {isSold ? "Credit" : "Debit"} ${(leg.openPrice * qty * 100).toFixed(2)}</div>
                 {leg.closeDate && (
-                  <div className="text-muted-foreground">Close {format(parseISO(leg.closeDate), "MMM d")} · {isSold ? "Debit" : "Credit"} ${leg.closePrice?.toFixed(2)}</div>
+                  <div className="text-muted-foreground">Close {format(parseISO(leg.closeDate), "MMM d")} · {isSold ? "Debit" : "Credit"} ${((leg.closePrice ?? 0) * qty * 100).toFixed(2)}</div>
                 )}
-                {leg.realizedPnl !== null && (
-                  <div className={cn("font-semibold font-mono mt-auto pt-1", leg.realizedPnl >= 0 ? "text-emerald-600" : "text-red-500")}>{fmt(leg.realizedPnl)}</div>
-                )}
+                <div className={cn("font-semibold font-mono mt-auto pt-1", legNet >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
+                  {fmt(legNet)}{!leg.closeDate ? " (open)" : ""}
+                </div>
               </div>
             </Fragment>
           );
@@ -287,7 +320,7 @@ const columns = [
         return <span className="font-mono text-xs">${Math.abs(closePrice).toFixed(2)}</span>;
       if (unrealizedClosePrice !== null)
         return (
-          <span className="font-mono text-xs text-amber-500 dark:text-amber-400" title="Estimated close at current market">
+          <span className="font-mono text-xs text-muted-foreground" title="Estimated close at current market">
             ~${Math.abs(unrealizedClosePrice).toFixed(2)}
           </span>
         );
