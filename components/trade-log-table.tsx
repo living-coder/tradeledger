@@ -130,7 +130,7 @@ function InlineSpreadChain({ chain }: { chain: SpreadRollChain }) {
   return (
     <div className="bg-blue-50/60 dark:bg-blue-950/20 border-y border-blue-200/60 dark:border-blue-800/40 px-4 py-3">
       <div className="flex items-center gap-3 mb-2">
-        <span className="font-semibold text-sm">Roll Chain — {chain.underlying} {chain.optionType} spread</span>
+        <span className="font-semibold text-sm">Roll Chain — {chain.underlying} {chain.optionType.toUpperCase()} SPREAD</span>
         <span className={cn("font-mono font-semibold text-sm", grandTotal >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
           {fmt(grandTotal)} running total
         </span>
@@ -144,13 +144,12 @@ function InlineSpreadChain({ chain }: { chain: SpreadRollChain }) {
             ? (s.closeNetCredit > 0 ? "Debit" : "Credit")
             : null;
           const legNet = legNets[idx];
-          const cumulative = runningTotals[idx];
           return (
             <Fragment key={s.id}>
               {idx > 0 && (
                 <div className="flex flex-col items-center justify-center gap-1">
                   <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />
-                  <span className={cn("font-mono text-[10px] font-semibold", cumulative >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
+                  <span className={cn("font-mono text-[10px] font-semibold", legNets[idx - 1] >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
                     {fmt(runningTotals[idx - 1])}
                   </span>
                 </div>
@@ -193,7 +192,7 @@ function InlineContractChain({ chain }: { chain: RollChain }) {
   return (
     <div className="bg-blue-50/60 dark:bg-blue-950/20 border-y border-blue-200/60 dark:border-blue-800/40 px-4 py-3">
       <div className="flex items-center gap-3 mb-2">
-        <span className="font-semibold text-sm">Roll Chain — {chain.underlying} {chain.optionType}</span>
+        <span className="font-semibold text-sm">Roll Chain — {chain.underlying} {chain.optionType.toUpperCase()}</span>
         <span className={cn("font-mono font-semibold text-sm", grandTotal >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
           {fmt(grandTotal)} running total
         </span>
@@ -203,13 +202,12 @@ function InlineContractChain({ chain }: { chain: RollChain }) {
           const isSold = leg.quantity < 0;
           const qty = Math.abs(leg.quantity);
           const legNet = legNets[idx];
-          const cumulative = runningTotals[idx];
           return (
             <Fragment key={leg.id}>
               {idx > 0 && (
                 <div className="flex flex-col items-center justify-center gap-1">
                   <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />
-                  <span className={cn("font-mono text-[10px] font-semibold", cumulative >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
+                  <span className={cn("font-mono text-[10px] font-semibold", legNets[idx - 1] >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
                     {fmt(runningTotals[idx - 1])}
                   </span>
                 </div>
@@ -394,7 +392,21 @@ export function TradeLogTable({ contracts, spreads, rollChains, spreadRollChains
           if (!chain) return true;
           return chain.legs[chain.legs.length - 1].id === s.id;
         })
-        .map(itemFromSpread),
+        .map((s) => {
+          const item = itemFromSpread(s);
+          // Adjust unrealized P&L to include closed legs' cash flows from the chain.
+          // Formula: grandTotal (all credits/debits) - current close debit = chain P&L estimate.
+          if (s.rollChainId && item.unrealizedPnl !== null) {
+            const chain = spreadChainMap.get(s.rollChainId);
+            if (chain) {
+              const closedLegTotal = chain.legs
+                .filter((leg) => leg.id !== s.id)
+                .reduce((sum, leg) => sum + (leg.netCredit - (leg.closeNetCredit ?? 0)) * leg.quantity * 100, 0);
+              item.unrealizedPnl = Math.round((closedLegTotal + item.unrealizedPnl) * 100) / 100;
+            }
+          }
+          return item;
+        }),
       ...contracts.map(itemFromContract),
     ];
     if (statusFilter === "all") return items;
