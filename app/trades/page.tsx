@@ -47,17 +47,26 @@ export default function TradesPage() {
 
   const totalPnl = data?.totalRealizedPnl ?? 0;
 
-  const marginUsed = useMemo(() => {
-    if (!data) return 0;
-    // Margin from identified spreads: width × quantity × 100
-    const fromSpreads = data.spreads
-      .filter((s) => s.status === "open")
-      .reduce((sum, s) => sum + Math.abs(s.shortLeg.strike - s.longLeg.strike) * s.quantity * 100, 0);
-    // Margin from standalone contracts
-    const fromContracts = data.contracts
-      .filter((c) => c.status === "open")
-      .reduce((sum, c) => sum + (-c.quantity) * c.strike * 100, 0);
-    return Math.max(0, fromSpreads + fromContracts);
+  const { marginUsed, totalCredits } = useMemo(() => {
+    if (!data) return { marginUsed: 0, totalCredits: 0 };
+    const openSpreads = data.spreads.filter((s) => s.status === "open");
+    const openContracts = data.contracts.filter((c) => c.status === "open");
+
+    const marginUsed = Math.max(
+      0,
+      openSpreads.reduce((sum, s) => sum + Math.abs(s.shortLeg.strike - s.longLeg.strike) * s.quantity * 100, 0) +
+      openContracts.reduce((sum, c) => sum + (-c.quantity) * c.strike * 100, 0)
+    );
+
+    const totalCredits =
+      openSpreads
+        .filter((s) => s.netCredit > 0)
+        .reduce((sum, s) => sum + s.netCredit * s.quantity * 100, 0) +
+      openContracts
+        .filter((c) => c.quantity < 0)
+        .reduce((sum, c) => sum + c.openPrice * Math.abs(c.quantity) * 100, 0);
+
+    return { marginUsed, totalCredits };
   }, [data]);
 
   return (
@@ -97,8 +106,9 @@ export default function TradesPage() {
               positive={totalPnl >= 0}
             />
             <StatCard
-              label="Open Contracts"
-              value={String(data.openContracts)}
+              label="Total Credits"
+              value={`$${totalCredits.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+              sub={`${data.openContracts} open contracts`}
             />
             <StatCard
               label="Closed Contracts"

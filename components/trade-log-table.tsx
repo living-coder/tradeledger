@@ -41,6 +41,9 @@ interface TableItem {
   closeDate: string | null;
   closePrice: number | null;
   realizedPnl: number | null;
+  // Unrealized (amber) — populated when market quotes are available
+  unrealizedClosePrice: number | null;
+  unrealizedPnl: number | null;
   status: ContractStatus;
   broker: string;
   rollChainId: string | null;
@@ -65,6 +68,8 @@ function itemFromSpread(s: Spread): TableItem {
     closeDate: s.closeDate,
     closePrice: s.closeNetCredit,
     realizedPnl: s.realizedPnl,
+    unrealizedClosePrice: s.unrealizedCloseDebit ?? null,
+    unrealizedPnl: s.unrealizedPnl ?? null,
     status: s.status,
     broker: s.broker,
     rollChainId: s.rollChainId,
@@ -86,6 +91,8 @@ function itemFromContract(c: Contract): TableItem {
     closeDate: c.closeDate,
     closePrice: c.closePrice,
     realizedPnl: c.realizedPnl,
+    unrealizedClosePrice: c.bidPrice ?? null,
+    unrealizedPnl: c.unrealizedPnl ?? null,
     status: c.status,
     broker: c.broker,
     rollChainId: c.rollChainId,
@@ -119,21 +126,32 @@ function InlineSpreadChain({ chain }: { chain: SpreadRollChain }) {
           {fmt(chain.totalRealizedPnl)} total
         </span>
       </div>
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-stretch gap-2">
         {chain.legs.map((s, idx) => {
           const lo = Math.min(s.shortLeg.strike, s.longLeg.strike);
           const hi = Math.max(s.shortLeg.strike, s.longLeg.strike);
+          const openLabel = s.netCredit >= 0 ? "Credit" : "Debit";
+          const closeLabel = s.closeNetCredit !== null
+            ? (s.closeNetCredit > 0 ? "Debit" : "Credit")
+            : null;
           return (
             <Fragment key={s.id}>
-              {idx > 0 && <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />}
-              <div className="border rounded-md px-3 py-2 bg-background space-y-0.5 text-xs min-w-[160px]">
-                <div className="font-mono font-semibold">${hi} / ${lo} · {s.shortLeg.expiry.slice(5)}</div>
-                <div className="text-muted-foreground">Open {format(parseISO(s.openDate), "MMM d")} · net {s.netCredit >= 0 ? "+" : ""}${s.netCredit.toFixed(2)}</div>
+              {idx > 0 && (
+                <div className="flex items-center">
+                  <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />
+                </div>
+              )}
+              <div className="border rounded-md px-3 py-2 bg-background space-y-0.5 text-xs min-w-[200px] flex flex-col">
+                <div className="font-mono font-semibold">${hi} / ${lo}</div>
+                <div className="text-muted-foreground text-[11px]">Expiry {format(parseISO(s.shortLeg.expiry), "MMMM dd, yyyy")}</div>
+                <div className="text-muted-foreground">Open {format(parseISO(s.openDate), "MMM d")} · {openLabel} ${Math.abs(s.netCredit).toFixed(2)}</div>
                 {s.closeDate && (
-                  <div className="text-muted-foreground">Close {format(parseISO(s.closeDate), "MMM d")} · net {s.closeNetCredit !== null ? `$${s.closeNetCredit.toFixed(2)}` : "—"}</div>
+                  <div className="text-muted-foreground">
+                    Close {format(parseISO(s.closeDate), "MMM d")} · {closeLabel} {s.closeNetCredit !== null ? `$${Math.abs(s.closeNetCredit).toFixed(2)}` : "—"}
+                  </div>
                 )}
                 {s.realizedPnl !== null && (
-                  <div className={cn("font-semibold font-mono", s.realizedPnl >= 0 ? "text-emerald-600" : "text-red-500")}>{fmt(s.realizedPnl)}</div>
+                  <div className={cn("font-semibold font-mono mt-auto pt-1", s.realizedPnl >= 0 ? "text-emerald-600" : "text-red-500")}>{fmt(s.realizedPnl)}</div>
                 )}
               </div>
             </Fragment>
@@ -153,20 +171,30 @@ function InlineContractChain({ chain }: { chain: RollChain }) {
           {fmt(chain.totalRealizedPnl)} total
         </span>
       </div>
-      <div className="flex flex-wrap items-center gap-2">
-        {chain.legs.map((leg, idx) => (
-          <Fragment key={leg.id}>
-            {idx > 0 && <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />}
-            <div className="border rounded-md px-3 py-2 bg-background space-y-0.5 text-xs min-w-[140px]">
-              <div className="font-mono font-semibold">${leg.strike} · {leg.expiry.slice(5)}</div>
-              <div className="text-muted-foreground">Open {format(parseISO(leg.openDate), "MMM d")} @ ${leg.openPrice.toFixed(2)}</div>
-              {leg.closeDate && <div className="text-muted-foreground">Close {format(parseISO(leg.closeDate), "MMM d")} @ ${leg.closePrice?.toFixed(2)}</div>}
-              {leg.realizedPnl !== null && (
-                <div className={cn("font-semibold font-mono", leg.realizedPnl >= 0 ? "text-emerald-600" : "text-red-500")}>{fmt(leg.realizedPnl)}</div>
+      <div className="flex flex-wrap items-stretch gap-2">
+        {chain.legs.map((leg, idx) => {
+          const isSold = leg.quantity < 0;
+          return (
+            <Fragment key={leg.id}>
+              {idx > 0 && (
+                <div className="flex items-center">
+                  <ArrowRight className="h-3 w-3 text-muted-foreground shrink-0" />
+                </div>
               )}
-            </div>
-          </Fragment>
-        ))}
+              <div className="border rounded-md px-3 py-2 bg-background space-y-0.5 text-xs min-w-[180px] flex flex-col">
+                <div className="font-mono font-semibold">${leg.strike}</div>
+                <div className="text-muted-foreground text-[11px]">Expiry {format(parseISO(leg.expiry), "MMMM dd, yyyy")}</div>
+                <div className="text-muted-foreground">Open {format(parseISO(leg.openDate), "MMM d")} · {isSold ? "Credit" : "Debit"} ${leg.openPrice.toFixed(2)}</div>
+                {leg.closeDate && (
+                  <div className="text-muted-foreground">Close {format(parseISO(leg.closeDate), "MMM d")} · {isSold ? "Debit" : "Credit"} ${leg.closePrice?.toFixed(2)}</div>
+                )}
+                {leg.realizedPnl !== null && (
+                  <div className={cn("font-semibold font-mono mt-auto pt-1", leg.realizedPnl >= 0 ? "text-emerald-600" : "text-red-500")}>{fmt(leg.realizedPnl)}</div>
+                )}
+              </div>
+            </Fragment>
+          );
+        })}
       </div>
     </div>
   );
@@ -253,18 +281,38 @@ const columns = [
   }),
   col.accessor("closePrice", {
     header: "Close $",
-    cell: (i) => i.getValue() !== null
-      ? <span className="font-mono text-xs">${Math.abs(i.getValue()!).toFixed(2)}</span>
-      : <span className="text-muted-foreground">—</span>,
+    cell: ({ row }) => {
+      const { closePrice, unrealizedClosePrice } = row.original;
+      if (closePrice !== null)
+        return <span className="font-mono text-xs">${Math.abs(closePrice).toFixed(2)}</span>;
+      if (unrealizedClosePrice !== null)
+        return (
+          <span className="font-mono text-xs text-amber-500 dark:text-amber-400" title="Estimated close at current market">
+            ~${Math.abs(unrealizedClosePrice).toFixed(2)}
+          </span>
+        );
+      return <span className="text-muted-foreground">—</span>;
+    },
   }),
   col.accessor("realizedPnl", {
     header: "P&L",
-    cell: (i) => (
-      <span className={cn("font-mono font-semibold text-xs", pnlColor(i.getValue()))}>
-        {fmt(i.getValue())}
-      </span>
-    ),
-    sortingFn: (a, b) => (a.original.realizedPnl ?? -Infinity) - (b.original.realizedPnl ?? -Infinity),
+    cell: ({ row }) => {
+      const { realizedPnl, unrealizedPnl } = row.original;
+      if (realizedPnl !== null)
+        return <span className={cn("font-mono font-semibold text-xs", pnlColor(realizedPnl))}>{fmt(realizedPnl)}</span>;
+      if (unrealizedPnl !== null)
+        return (
+          <span className={cn("font-mono font-semibold text-xs", pnlColor(unrealizedPnl))} title="Unrealized P&L at current market prices">
+            {fmt(unrealizedPnl)}
+          </span>
+        );
+      return <span className="text-muted-foreground">—</span>;
+    },
+    sortingFn: (a, b) => {
+      const av = a.original.realizedPnl ?? a.original.unrealizedPnl ?? -Infinity;
+      const bv = b.original.realizedPnl ?? b.original.unrealizedPnl ?? -Infinity;
+      return av - bv;
+    },
   }),
   col.accessor("status", {
     header: "Status",

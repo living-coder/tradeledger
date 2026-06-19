@@ -35,7 +35,9 @@ export interface Contract {
   // (closePrice - openPrice) * quantity * 100 - commissions
   realizedPnl: number | null;
 
-  // For open positions: (currentPrice - openPrice) * quantity * 100
+  // Current market bid (ask for shorts, bid for longs) — populated during refresh
+  bidPrice: number | null;
+  // P&L if closed at current market price
   unrealizedPnl: number | null;
 
   rollChainId: string | null;
@@ -68,6 +70,8 @@ export interface Spread {
   netCredit: number;          // per share: shortLeg.openPrice - longLeg.openPrice
   closeNetCredit: number | null; // per share when closed
   realizedPnl: number | null;
+  unrealizedPnl: number | null;          // P&L if closed at current market
+  unrealizedCloseDebit: number | null;   // net debit to close (shortAsk - longBid)
   rollChainId: string | null;
   rollOrder: number | null;
 }

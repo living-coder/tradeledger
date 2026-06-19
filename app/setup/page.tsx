@@ -16,7 +16,7 @@ export default function SetupPage() {
 
   async function fetchConnections() {
     const [rhResp, fidResp] = await Promise.all([
-      fetch("/api/plaid/accounts"),
+      fetch("/api/accounts"),
       fetch("/api/fidelity/import"),
     ]);
     const rh = rhResp.ok ? await rhResp.json() : {};
