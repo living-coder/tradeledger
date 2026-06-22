@@ -36,10 +36,24 @@ def main():
         k = (c["underlying"], c["expiry"])
         groups.setdefault(k, []).append(c)
 
+    from datetime import date, timedelta
+
+    def fetch_chain(ticker, expiry_str):
+        """Try expiry_str first; if not found, try the previous day (Robinhood uses OCC
+        Saturday dates for standard monthly options while yfinance uses the Friday)."""
+        try:
+            return ticker.option_chain(expiry_str)
+        except Exception as e:
+            if "cannot be found" not in str(e).lower():
+                raise
+        prev = (date.fromisoformat(expiry_str) - timedelta(days=1)).isoformat()
+        return ticker.option_chain(prev)
+
     quotes: dict = {}
     for (underlying, expiry), ctrs in groups.items():
         try:
-            chain = yf.Ticker(underlying).option_chain(expiry)
+            ticker = yf.Ticker(underlying)
+            chain = fetch_chain(ticker, expiry)
             for c in ctrs:
                 df = chain.puts if c["optionType"] == "put" else chain.calls
                 strike = float(c["strike"])
