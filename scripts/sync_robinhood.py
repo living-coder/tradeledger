@@ -124,7 +124,6 @@ def fetch_open_positions() -> list[dict]:
         expiry = pos.get("expiration_date", "")
         opt_type = pos.get("option_type") or ""
         if opt_type not in ("put", "call"):
-            sys.stderr.write(f"Skipping position with missing option_type: {underlying} {expiry}\n")
             continue
         strike = float(pos.get("strike_price") or 0)
         qty = float(pos.get("quantity") or 0)
