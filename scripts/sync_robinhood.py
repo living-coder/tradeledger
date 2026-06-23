@@ -155,6 +155,33 @@ def main():
         order_contracts = fetch_option_orders()
         open_positions = fetch_open_positions()
 
+        # The positions API is the authority for what is currently held.
+        # Any "open" contract in order history that isn't in the positions API
+        # was closed or expired outside our order history (e.g. expiry, partial
+        # fill with no close leg, multi-leg orders where only one leg appears).
+        open_pos_keys = {
+            (p["underlying"], p["strike"], p["expiry"], p["optionType"])
+            for p in open_positions
+        }
+        for c in order_contracts:
+            if c["status"] != "open":
+                continue
+            key = (c["underlying"], c["strike"], c["expiry"], c["optionType"])
+            if key not in open_pos_keys:
+                c["status"] = "expired"
+                c["closeDate"] = c["expiry"]
+                c["closePrice"] = 0.0
+                qty = abs(c.get("quantity") or 0)
+                open_price = c.get("openPrice") or 0.0
+                fees = (c.get("openCommission") or 0) + (c.get("closeCommission") or 0)
+                if (c.get("quantity") or 0) < 0:
+                    # Short expired worthless — keep the premium
+                    c["realizedPnl"] = round(open_price * qty * 100 - fees, 2)
+                else:
+                    # Long expired worthless — lose the premium
+                    c["realizedPnl"] = round(-open_price * qty * 100 - fees, 2)
+
+        # Add positions from the API that have no order history entry at all
         seen = {
             (c["underlying"], c["strike"], c["expiry"], c["optionType"])
             for c in order_contracts
