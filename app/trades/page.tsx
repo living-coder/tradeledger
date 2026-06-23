@@ -50,14 +50,22 @@ export default function TradesPage() {
 
   const { marginUsed, totalCredits } = useMemo(() => {
     if (!data) return { marginUsed: 0, totalCredits: 0 };
-    const openSpreads = data.spreads.filter((s) => s.status === "open");
+
+    // Non-final legs of spread roll chains have status set to "open" for display
+    // purposes, but they represent closed-and-rolled positions — exclude from margin.
+    const rolledNonFinalIds = new Set(
+      data.spreadRollChains.flatMap((chain) =>
+        chain.legs.slice(0, -1).map((leg) => leg.id)
+      )
+    );
+
+    const openSpreads = data.spreads.filter(
+      (s) => s.status === "open" && !rolledNonFinalIds.has(s.id)
+    );
     const openContracts = data.contracts.filter((c) => c.status === "open");
 
-    const marginUsed = Math.max(
-      0,
-      openSpreads.reduce((sum, s) => sum + Math.abs(s.shortLeg.strike - s.longLeg.strike) * s.quantity * 100, 0) +
-      openContracts.reduce((sum, c) => sum + (-c.quantity) * c.strike * 100, 0)
-    );
+    const marginUsed =
+      openSpreads.reduce((sum, s) => sum + Math.abs(s.shortLeg.strike - s.longLeg.strike) * s.quantity * 100, 0);
 
     const totalCredits =
       openSpreads
@@ -116,9 +124,9 @@ export default function TradesPage() {
               value={String(data.closedContracts)}
             />
             <StatCard
-              label="Margin Used"
-              value={`$${Math.max(0, marginUsed).toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
-              sub="net short notional"
+              label="Current Margin Risk"
+              value={`$${marginUsed.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+              sub="spread collateral required"
             />
             <StatCard
               label="Roll Chains"

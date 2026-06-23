@@ -47,6 +47,7 @@ export function FidelityCsvUpload({ onImported }: Props) {
 
   function onInputChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
+    e.target.value = "";
     if (file) handleFile(file);
   }
 

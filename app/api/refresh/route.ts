@@ -100,8 +100,33 @@ export async function POST() {
     }
   }
 
+  // Deduplicate: drop Fidelity *open* legs that are already covered by a live
+  // Robinhood open position with the same option identifier. This prevents
+  // double-counting when positions were transferred from Fidelity to Robinhood
+  // (ACATS) or when a Fidelity CSV omits the closing transaction.
+  const robinhoodOpenKeys = new Set(
+    allContracts
+      .filter((c) => c.broker === "robinhood" && c.status === "open")
+      .map((c) => `${c.underlying}|${c.optionType}|${c.expiry}|${c.strike}`)
+  );
+  const deduplicatedContracts = allContracts.filter(
+    (c) =>
+      !(
+        c.broker === "fidelity" &&
+        c.status === "open" &&
+        robinhoodOpenKeys.has(`${c.underlying}|${c.optionType}|${c.expiry}|${c.strike}`)
+      )
+  );
+  if (allContracts.length !== deduplicatedContracts.length) {
+    const dropped = allContracts.length - deduplicatedContracts.length;
+    allErrors.push({
+      source: "Fidelity CSV",
+      message: `${dropped} open leg(s) hidden — same option already tracked in Robinhood. If these are separate positions in two accounts, contact support.`,
+    });
+  }
+
   // Detect vertical spreads; standalone legs go through individual roll detection
-  const { spreads: rawSpreads, standalone } = detectSpreads(allContracts);
+  const { spreads: rawSpreads, standalone } = detectSpreads(deduplicatedContracts);
   const { spreads, chains: spreadRollChains } = detectSpreadRollChains(rawSpreads);
   const { contracts, rollChains } = detectRollChains(standalone);
 
@@ -166,9 +191,23 @@ export async function POST() {
       timeout: 60_000,
       encoding: "utf-8",
     });
-    if (qr.stderr?.trim()) allErrors.push({ source: "Market Quotes", message: qr.stderr.trim() });
-    if (!qr.error && qr.stdout?.trim()) {
-      try { quotes = JSON.parse(qr.stdout.trim()) as QuoteMap; } catch { /* ignore */ }
+    if (qr.error) {
+      allErrors.push({ source: "Market Quotes", message: `Failed to run quote script: ${qr.error.message}` });
+    } else {
+      if (qr.stderr?.trim()) allErrors.push({ source: "Market Quotes", message: qr.stderr.trim() });
+      if (qr.stdout?.trim()) {
+        try {
+          quotes = JSON.parse(qr.stdout.trim()) as QuoteMap;
+          const quoteCount = Object.keys(quotes).length;
+          if (quoteCount === 0) {
+            allErrors.push({ source: "Market Quotes", message: `Sent ${uniqueLegs.length} leg(s) but received 0 quotes. Sample key: ${uniqueLegs[0]?.key}` });
+          }
+        } catch (e) {
+          allErrors.push({ source: "Market Quotes", message: `Could not parse quote output: ${String(e)}` });
+        }
+      } else {
+        allErrors.push({ source: "Market Quotes", message: `Quote script produced no output. Exit code: ${qr.status}. Sent keys: ${uniqueLegs.map(l => l.key).join(", ")}` });
+      }
     }
   }
 

@@ -58,6 +58,21 @@ export function parseFidelityCsv(
     return { contracts: [], errors: ["Could not find header row — make sure this is a Fidelity History CSV"] };
   }
 
+  // Detect column positions from header to handle both old and new Fidelity CSV layouts
+  const headerFields = parseCsvLine(lines[headerIdx]);
+  const col = (name: string) => headerFields.findIndex(h => h.toLowerCase().includes(name.toLowerCase()));
+  const idxDate   = col("Run Date");
+  const idxAction = col("Action");
+  const idxSymbol = col("Symbol");
+  const idxPrice  = col("Price");
+  const idxQty    = col("Quantity");
+  const idxComm   = col("Commission");
+  const idxFees   = col("Fees");
+
+  if ([idxDate, idxAction, idxSymbol, idxPrice, idxQty, idxComm, idxFees].some(i => i === -1)) {
+    return { contracts: [], errors: ["CSV is missing expected columns (Run Date / Action / Symbol / Price / Quantity / Commission / Fees)"] };
+  }
+
   interface Row {
     date: string;
     symbol: string;
@@ -76,9 +91,17 @@ export function parseFidelityCsv(
     if (line.startsWith('"The data') || line.startsWith('"Brokerage') || line.startsWith('"Date downloaded')) break;
 
     const fields = parseCsvLine(line);
-    if (fields.length < 9) continue;
+    const maxIdx = Math.max(idxDate, idxAction, idxSymbol, idxPrice, idxQty, idxComm, idxFees);
+    if (fields.length <= maxIdx) continue;
 
-    const [runDate, action, symbol, , , priceStr, qtyStr, commStr, feesStr] = fields;
+    const runDate = fields[idxDate];
+    const action  = fields[idxAction];
+    const symbol  = fields[idxSymbol];
+    const priceStr = fields[idxPrice];
+    const qtyStr   = fields[idxQty];
+    const commStr  = fields[idxComm];
+    const feesStr  = fields[idxFees];
+
     if (!symbol.startsWith("-")) continue;
 
     const isOpen = action.includes("OPENING");

@@ -8,6 +8,7 @@ Output (stdout): JSON object keyed by `key` -> {bid, ask}
 Setup: pip install yfinance
 """
 import json
+import math
 import sys
 
 
@@ -61,6 +62,8 @@ def main():
                 if not row.empty:
                     bid = float(row["bid"].iloc[0])
                     ask = float(row["ask"].iloc[0])
+                    if math.isnan(bid) or math.isnan(ask) or (bid == 0 and ask == 0):
+                        continue
                     quotes[c["key"]] = {
                         "bid": round(bid, 4),
                         "ask": round(ask, 4),
