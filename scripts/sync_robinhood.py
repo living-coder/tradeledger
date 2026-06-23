@@ -122,7 +122,10 @@ def fetch_open_positions() -> list[dict]:
         # Open positions embed option details at the top level
         underlying = pos.get("chain_symbol", "")
         expiry = pos.get("expiration_date", "")
-        opt_type = pos.get("option_type", "call") or pos.get("type", "call")
+        opt_type = pos.get("option_type") or ""
+        if opt_type not in ("put", "call"):
+            sys.stderr.write(f"Skipping position with missing option_type: {underlying} {expiry}\n")
+            continue
         strike = float(pos.get("strike_price") or 0)
         qty = float(pos.get("quantity") or 0)
         avg_price = float(pos.get("average_price") or 0) / 100  # stored in cents
@@ -155,33 +158,6 @@ def main():
         order_contracts = fetch_option_orders()
         open_positions = fetch_open_positions()
 
-        # The positions API is the authority for what is currently held.
-        # Any "open" contract in order history that isn't in the positions API
-        # was closed or expired outside our order history (e.g. expiry, partial
-        # fill with no close leg, multi-leg orders where only one leg appears).
-        open_pos_keys = {
-            (p["underlying"], p["strike"], p["expiry"], p["optionType"])
-            for p in open_positions
-        }
-        for c in order_contracts:
-            if c["status"] != "open":
-                continue
-            key = (c["underlying"], c["strike"], c["expiry"], c["optionType"])
-            if key not in open_pos_keys:
-                c["status"] = "expired"
-                c["closeDate"] = c["expiry"]
-                c["closePrice"] = 0.0
-                qty = abs(c.get("quantity") or 0)
-                open_price = c.get("openPrice") or 0.0
-                fees = (c.get("openCommission") or 0) + (c.get("closeCommission") or 0)
-                if (c.get("quantity") or 0) < 0:
-                    # Short expired worthless — keep the premium
-                    c["realizedPnl"] = round(open_price * qty * 100 - fees, 2)
-                else:
-                    # Long expired worthless — lose the premium
-                    c["realizedPnl"] = round(-open_price * qty * 100 - fees, 2)
-
-        # Add positions from the API that have no order history entry at all
         seen = {
             (c["underlying"], c["strike"], c["expiry"], c["optionType"])
             for c in order_contracts
