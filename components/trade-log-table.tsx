@@ -653,6 +653,25 @@ const columns = [
       return av - bv;
     },
   }),
+  col.display({
+    id: "pnlPct",
+    header: "%",
+    cell: ({ row }) => {
+      const { realizedPnl, unrealizedPnl, openPrice, quantity, rollChainId } = row.original;
+      if (rollChainId) return <span className="text-muted-foreground text-xs">—</span>;
+      const pnlValue = realizedPnl ?? unrealizedPnl;
+      if (pnlValue === null) return <span className="text-muted-foreground text-xs">—</span>;
+      const basis = Math.abs(openPrice * quantity * 100);
+      if (basis === 0) return <span className="text-muted-foreground text-xs">—</span>;
+      const pct = (pnlValue / basis) * 100;
+      return (
+        <span className={cn("font-mono text-xs font-semibold", pnlColor(pnlValue))}>
+          {pct >= 0 ? "+" : ""}{pct.toFixed(1)}%
+        </span>
+      );
+    },
+    enableSorting: false,
+  }),
   col.accessor("status", {
     header: "Status",
     cell: (i) => {

@@ -132,6 +132,21 @@ export function detectSpreadRollChains(spreads: Spread[]): {
         used.add(spread.id);
         used.add(rolled.id);
         chainBuffer.push(rolled);
+
+        // Follow the chain forward: each rolled leg may itself have been rolled further
+        let next = rolled;
+        while (next.closeDate) {
+          const continuation = group.find(
+            (other) =>
+              other.id !== next.id &&
+              !used.has(other.id) &&
+              other.openDate === next.closeDate
+          );
+          if (!continuation) break;
+          used.add(continuation.id);
+          chainBuffer.push(continuation);
+          next = continuation;
+        }
       }
     }
 

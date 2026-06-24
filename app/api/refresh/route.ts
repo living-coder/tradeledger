@@ -145,7 +145,7 @@ export async function POST() {
       const fullFees = Math.round((c.totalFees ?? 0) * 2 * 100) / 100;
       c.totalFees = fullFees;
       c.status = "expired";
-      c.closeDate = nextBusinessDay(today);
+      c.closeDate = nextBusinessDay(c.expiry);
       c.closePrice = null;
       c.realizedPnl = c.quantity < 0
         ? Math.round((c.openPrice * Math.abs(c.quantity) * 100 - fullFees) * 100) / 100
@@ -157,7 +157,7 @@ export async function POST() {
     if (s.status === "open" && s.shortLeg.expiry <= today) {
       const fullFees = Math.round(((s.shortLeg.totalFees ?? 0) + (s.longLeg.totalFees ?? 0)) * 2 * 100) / 100;
       s.status = "expired";
-      s.closeDate = nextBusinessDay(today);
+      s.closeDate = nextBusinessDay(s.shortLeg.expiry);
       s.closeNetCredit = null;
       s.realizedPnl = Math.round((s.netCredit * s.quantity * 100 - fullFees) * 100) / 100;
       s.estimatedClose = true;
