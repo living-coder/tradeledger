@@ -115,68 +115,72 @@ export function detectSpreadRollChains(spreads: Spread[]): {
     group.sort((a, b) => a.openDate.localeCompare(b.openDate));
 
     const used = new Set<string>();
-    let chainBuffer: Spread[] = [];
+    const groupChains: Spread[][] = [];
 
     for (const spread of group) {
       if (used.has(spread.id) || !spread.closeDate) continue;
 
-      const rolled = group.find(
+      const firstRolled = group.find(
         (other) =>
           other.id !== spread.id &&
           !used.has(other.id) &&
           other.openDate === spread.closeDate
       );
 
-      if (rolled) {
-        if (chainBuffer.length === 0) chainBuffer.push(spread);
-        used.add(spread.id);
-        used.add(rolled.id);
-        chainBuffer.push(rolled);
+      if (!firstRolled) continue;
 
-        // Follow the chain forward: each rolled leg may itself have been rolled further
-        let next = rolled;
-        while (next.closeDate) {
-          const continuation = group.find(
-            (other) =>
-              other.id !== next.id &&
-              !used.has(other.id) &&
-              other.openDate === next.closeDate
-          );
-          if (!continuation) break;
-          used.add(continuation.id);
-          chainBuffer.push(continuation);
-          next = continuation;
-        }
+      // Each starting point gets its own chain buffer so parallel rolls
+      // (two spreads both rolled on the same day) produce separate chains.
+      const chainBuffer: Spread[] = [spread];
+      used.add(spread.id);
+
+      let current = firstRolled;
+      while (true) {
+        used.add(current.id);
+        chainBuffer.push(current);
+        if (!current.closeDate) break;
+        const next = group.find(
+          (other) =>
+            other.id !== current.id &&
+            !used.has(other.id) &&
+            other.openDate === current.closeDate
+        );
+        if (!next) break;
+        current = next;
       }
+
+      groupChains.push(chainBuffer);
     }
 
-    if (chainBuffer.length < 2) continue;
+    for (const chainBuffer of groupChains) {
+      if (chainBuffer.length < 2) continue;
 
-    const chainId = randomUUID();
+      const chainId = randomUUID();
 
-    // Stamp legs first; non-final legs are "open" — position was rolled, not realized
-    chainBuffer.forEach((s, idx) => {
-      const target = updated.find((u) => u.id === s.id)!;
-      target.rollChainId = chainId;
-      target.rollOrder = idx;
-      if (idx < chainBuffer.length - 1) {
-        target.status = "open";
-        // Keep closeDate/closeNetCredit for chain panel history display
-        // Null realizedPnl so the roll debit doesn't count as realized P&L
-        target.realizedPnl = null;
-      }
-    });
+      // Stamp legs first; non-final legs are "open" — position was rolled, not realized
+      chainBuffer.forEach((s, idx) => {
+        const target = updated.find((u) => u.id === s.id)!;
+        target.rollChainId = chainId;
+        target.rollOrder = idx;
+        if (idx < chainBuffer.length - 1) {
+          target.status = "open";
+          // Keep closeDate/closeNetCredit for chain panel history display
+          // Null realizedPnl so the roll debit doesn't count as realized P&L
+          target.realizedPnl = null;
+        }
+      });
 
-    // Build chain from already-modified objects so legs and totalRealizedPnl are consistent
-    const chainLegs = chainBuffer.map((s) => updated.find((u) => u.id === s.id)!);
-    chains.push({
-      id: chainId,
-      underlying: chainLegs[0].underlying,
-      optionType: chainLegs[0].optionType,
-      accountId: chainLegs[0].accountId,
-      legs: chainLegs,
-      totalRealizedPnl: chainLegs.reduce((sum, s) => sum + (s.realizedPnl ?? 0), 0),
-    });
+      // Build chain from already-modified objects so legs and totalRealizedPnl are consistent
+      const chainLegs = chainBuffer.map((s) => updated.find((u) => u.id === s.id)!);
+      chains.push({
+        id: chainId,
+        underlying: chainLegs[0].underlying,
+        optionType: chainLegs[0].optionType,
+        accountId: chainLegs[0].accountId,
+        legs: chainLegs,
+        totalRealizedPnl: chainLegs.reduce((sum, s) => sum + (s.realizedPnl ?? 0), 0),
+      });
+    }
   }
 
   return { spreads: updated, chains };

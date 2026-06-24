@@ -185,12 +185,20 @@ export async function POST() {
 
   let quotes: QuoteMap = {};
   if (uniqueLegs.length > 0) {
-    const qr = spawnSync("python", ["scripts/fetch_option_quotes.py"], {
-      input: JSON.stringify(uniqueLegs),
-      cwd: process.cwd(),
-      timeout: 60_000,
-      encoding: "utf-8",
-    });
+    const robinhoodToken = credentialStore.getAuth()?.accessToken;
+    const qr = robinhoodToken
+      ? spawnSync("python", ["scripts/fetch_robinhood_quotes.py"], {
+          input: JSON.stringify({ access_token: robinhoodToken, contracts: uniqueLegs }),
+          cwd: process.cwd(),
+          timeout: 60_000,
+          encoding: "utf-8",
+        })
+      : spawnSync("python", ["scripts/fetch_option_quotes.py"], {
+          input: JSON.stringify(uniqueLegs),
+          cwd: process.cwd(),
+          timeout: 60_000,
+          encoding: "utf-8",
+        });
     if (qr.error) {
       allErrors.push({ source: "Market Quotes", message: `Failed to run quote script: ${qr.error.message}` });
     } else {
