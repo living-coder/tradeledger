@@ -100,10 +100,14 @@ export async function POST() {
     }
   }
 
-  // Deduplicate: drop Fidelity *open* legs that are already covered by a live
-  // Robinhood open position with the same option identifier. This prevents
-  // double-counting when positions were transferred from Fidelity to Robinhood
-  // (ACATS) or when a Fidelity CSV omits the closing transaction.
+  // Pre-detect spreads on the full contract list so we know which Fidelity legs
+  // form spread pairs. Those must never be deduplicated — removing one leg of a
+  // spread would leave the other orphaned and break spread detection entirely.
+  const { spreadContractIds } = detectSpreads(allContracts);
+
+  // Deduplicate: drop Fidelity *standalone* open legs that are already covered by
+  // a live Robinhood open position with the same option identifier. This prevents
+  // double-counting after an ACATS transfer. Spread legs are always preserved.
   const robinhoodOpenKeys = new Set(
     allContracts
       .filter((c) => c.broker === "robinhood" && c.status === "open")
@@ -111,6 +115,7 @@ export async function POST() {
   );
   const deduplicatedContracts = allContracts.filter(
     (c) =>
+      spreadContractIds.has(c.id) ||
       !(
         c.broker === "fidelity" &&
         c.status === "open" &&
@@ -121,7 +126,7 @@ export async function POST() {
     const dropped = allContracts.length - deduplicatedContracts.length;
     allErrors.push({
       source: "Fidelity CSV",
-      message: `${dropped} open leg(s) hidden — same option already tracked in Robinhood. If these are separate positions in two accounts, contact support.`,
+      message: `${dropped} standalone open leg(s) hidden — same option already tracked in Robinhood as a separate position.`,
     });
   }
 

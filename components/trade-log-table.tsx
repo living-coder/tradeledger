@@ -427,7 +427,7 @@ function InlineSpreadChain({ chain }: { chain: SpreadRollChain }) {
       <div className="flex items-center gap-3 mb-2">
         <span className="font-semibold text-sm">Roll Chain — {chain.underlying} {chain.optionType.toUpperCase()} SPREAD</span>
         <span className={cn("font-mono font-semibold text-sm", grandTotal >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
-          {fmtSigned(grandTotal)} running total
+          {fmtSigned(grandTotal)} net credit
         </span>
       </div>
       <div className="flex flex-wrap items-stretch gap-2">
@@ -487,7 +487,7 @@ function InlineContractChain({ chain }: { chain: RollChain }) {
       <div className="flex items-center gap-3 mb-2">
         <span className="font-semibold text-sm">Roll Chain — {chain.underlying} {chain.optionType.toUpperCase()}</span>
         <span className={cn("font-mono font-semibold text-sm", grandTotal >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
-          {fmtSigned(grandTotal)} running total
+          {fmtSigned(grandTotal)} net credit
         </span>
       </div>
       <div className="flex flex-wrap items-stretch gap-2">
@@ -738,8 +738,43 @@ export function TradeLogTable({ contracts, spreads, rollChains, spreadRollChains
         }),
       ...contracts.map(itemFromContract),
     ];
-    if (statusFilter === "all") return items;
-    return items.filter((r) => r.status === statusFilter);
+    // Aggregate non-chained spread rows that represent the same position entered as
+    // multiple orders on the same day (e.g. 2× TQQQ 60/40 → one row qty=2).
+    // Roll-chain final legs are never aggregated — each is a distinct chain entry.
+    const aggregated: TableItem[] = [];
+    const seen = new Set<string>();
+    for (const item of items) {
+      if (item.rollChainId || item.source.kind !== "spread") {
+        aggregated.push(item);
+        continue;
+      }
+      const key = [item.underlying, item.displayType, item.strikeLabel, item.expiry,
+        item.openDate, item.status, item.broker, item.closeDate ?? ""].join("|");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const group = items.filter(
+        (o) => !o.rollChainId && o.source.kind === "spread" &&
+          [o.underlying, o.displayType, o.strikeLabel, o.expiry,
+            o.openDate, o.status, o.broker, o.closeDate ?? ""].join("|") === key
+      );
+      if (group.length === 1) { aggregated.push(item); continue; }
+      const totalQty = group.reduce((s, i) => s + i.quantity, 0);
+      const wAvgOpen = group.reduce((s, i) => s + i.openPrice * i.quantity, 0) / totalQty;
+      aggregated.push({
+        ...item,
+        quantity: totalQty,
+        openPrice: Math.round(wAvgOpen * 100000) / 100000,
+        realizedPnl: group.some((i) => i.realizedPnl !== null)
+          ? Math.round(group.reduce((s, i) => s + (i.realizedPnl ?? 0), 0) * 100) / 100
+          : null,
+        unrealizedPnl: group.some((i) => i.unrealizedPnl !== null)
+          ? Math.round(group.reduce((s, i) => s + (i.unrealizedPnl ?? 0), 0) * 100) / 100
+          : null,
+      });
+    }
+
+    if (statusFilter === "all") return aggregated;
+    return aggregated.filter((r) => r.status === statusFilter);
   }, [spreads, contracts, statusFilter, spreadChainMap]);
 
   const table = useReactTable({
